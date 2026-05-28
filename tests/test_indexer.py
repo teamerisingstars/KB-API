@@ -1,4 +1,7 @@
-from app.indexer import parse_sections
+import os
+import tempfile
+
+from app.indexer import IndexStore, build_index, parse_sections
 from app.models import Section
 
 
@@ -85,3 +88,62 @@ def test_parse_sections_tokens_are_lemmatized():
     # "programming" should be lemmatized; stopwords removed
     assert "the" not in python_section.tokens
     assert "program" in python_section.tokens or "programming" in python_section.tokens
+
+
+def test_index_store_starts_empty():
+    store = IndexStore()
+    assert store.sections == []
+    assert store.bm25 is None
+    assert store.file_count == 0
+
+
+def test_index_store_swap_updates_data():
+    from rank_bm25 import BM25Okapi
+    store = IndexStore()
+    sections = [Section(heading="H", body="body", source_file="f.md", tokens=["body"])]
+    bm25 = BM25Okapi([["body"]])
+    store.swap(sections, bm25, file_count=1, last_indexed="2026-05-29T00:00:00Z")
+    assert len(store.sections) == 1
+    assert store.bm25 is not None
+    assert store.file_count == 1
+
+
+def test_build_index_indexes_md_files():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        md_path = os.path.join(tmpdir, "test.md")
+        with open(md_path, "w") as f:
+            f.write("## Python\n\nPython is a programming language.\n")
+        store = IndexStore()
+        build_index(tmpdir, store)
+        assert len(store.sections) > 0
+        assert store.bm25 is not None
+        assert store.file_count == 1
+
+
+def test_build_index_handles_missing_directory():
+    store = IndexStore()
+    build_index("/nonexistent/path/xyz", store)
+    assert store.sections == []
+    assert store.bm25 is None
+
+
+def test_build_index_skips_malformed_files():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        bad_path = os.path.join(tmpdir, "bad.md")
+        with open(bad_path, "wb") as f:
+            f.write(b"\xff\xfe invalid utf-8 \x00")
+        store = IndexStore()
+        build_index(tmpdir, store)
+        # Should not raise; bad file is skipped
+        assert store.sections == []
+
+
+def test_build_index_walks_subdirectories():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        subdir = os.path.join(tmpdir, "sub")
+        os.makedirs(subdir)
+        with open(os.path.join(subdir, "nested.md"), "w") as f:
+            f.write("## Nested\n\nNested content here.\n")
+        store = IndexStore()
+        build_index(tmpdir, store)
+        assert len(store.sections) > 0

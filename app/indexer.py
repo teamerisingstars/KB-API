@@ -1,7 +1,10 @@
 import logging
+import threading
+from datetime import datetime, timezone
 from pathlib import Path
 
 from markdown_it import MarkdownIt
+from rank_bm25 import BM25Okapi
 
 from app.models import Section
 from app.nlp import lemmatize_text
@@ -63,3 +66,79 @@ def parse_sections(content: str, source_file: str) -> list[Section]:
         ))
 
     return sections
+
+
+class IndexStore:
+    """Thread-safe container for the BM25 index. Supports atomic swap."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._sections: list[Section] = []
+        self._bm25: BM25Okapi | None = None
+        self._file_count: int = 0
+        self._last_indexed: str | None = None
+
+    def swap(
+        self,
+        sections: list[Section],
+        bm25: BM25Okapi | None,
+        file_count: int,
+        last_indexed: str,
+    ) -> None:
+        with self._lock:
+            self._sections = sections
+            self._bm25 = bm25
+            self._file_count = file_count
+            self._last_indexed = last_indexed
+
+    def snapshot(self) -> tuple[list[Section], BM25Okapi | None]:
+        """Return sections + bm25 atomically to avoid TOCTOU between two reads."""
+        with self._lock:
+            return self._sections, self._bm25
+
+    @property
+    def sections(self) -> list[Section]:
+        with self._lock:
+            return self._sections
+
+    @property
+    def bm25(self) -> BM25Okapi | None:
+        with self._lock:
+            return self._bm25
+
+    @property
+    def file_count(self) -> int:
+        with self._lock:
+            return self._file_count
+
+    @property
+    def last_indexed(self) -> str | None:
+        with self._lock:
+            return self._last_indexed
+
+
+def build_index(knowledge_dir: str, index_store: IndexStore) -> None:
+    """Walk knowledge_dir, parse all .md files, build BM25 index, atomically swap."""
+    knowledge_path = Path(knowledge_dir)
+    if not knowledge_path.exists():
+        logger.error("Knowledge directory not found: %s", knowledge_dir)
+        return
+
+    md_files = list(knowledge_path.rglob("*.md"))
+    sections: list[Section] = []
+
+    for md_file in md_files:
+        try:
+            content = md_file.read_text(encoding="utf-8")
+            try:
+                rel_path = str(md_file.relative_to(Path.cwd()))
+            except ValueError:
+                rel_path = str(md_file.relative_to(knowledge_path))
+            sections.extend(parse_sections(content, rel_path))
+        except Exception as exc:
+            logger.warning("Skipping %s: %s", md_file, exc)
+
+    bm25 = BM25Okapi([s.tokens for s in sections]) if sections else None
+    last_indexed = datetime.now(timezone.utc).isoformat()
+    index_store.swap(sections, bm25, len(md_files), last_indexed)
+    logger.info("Indexed %d sections from %d files", len(sections), len(md_files))
