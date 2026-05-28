@@ -7,11 +7,13 @@ _STOPWORDS = set(stopwords.words("english"))
 
 
 def penn_to_wordnet(tag: str) -> str:
-    if tag.startswith("J"):
-        return wordnet.ADJ
-    if tag.startswith("V"):
+    if tag.startswith("NN"):
+        return wordnet.NOUN
+    if tag.startswith("VB"):
         return wordnet.VERB
-    if tag.startswith("R"):
+    if tag.startswith("JJ"):
+        return wordnet.ADJ
+    if tag.startswith("RB"):
         return wordnet.ADV
     return wordnet.NOUN
 
