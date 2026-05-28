@@ -38,6 +38,10 @@ class KnowledgeWatcher:
         logger.info("Knowledge base watcher started.")
 
     def stop(self) -> None:
+        with self._handler._lock:
+            if self._handler._timer is not None:
+                self._handler._timer.cancel()
+                self._handler._timer = None
         self._observer.stop()
         self._observer.join()
         logger.info("Knowledge base watcher stopped.")
