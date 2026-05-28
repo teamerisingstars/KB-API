@@ -41,7 +41,7 @@ def parse_sections(content: str, source_file: str) -> list[Section]:
         elif token.type == "heading_close":
             inside_heading = False
         elif token.type == "fence":
-            pass  # Skip code block content
+            pass  # fence token holds the entire code block; intentionally not appended to body
         elif token.type == "inline":
             if inside_heading:
                 current_heading = token.content
