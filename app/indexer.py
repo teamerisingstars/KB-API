@@ -130,10 +130,7 @@ def build_index(knowledge_dir: str, index_store: IndexStore) -> None:
     for md_file in md_files:
         try:
             content = md_file.read_text(encoding="utf-8")
-            try:
-                rel_path = str(md_file.relative_to(Path.cwd()))
-            except ValueError:
-                rel_path = str(md_file.relative_to(knowledge_path))
+            rel_path = str(md_file.relative_to(knowledge_path))
             sections.extend(parse_sections(content, rel_path))
         except Exception as exc:
             logger.warning("Skipping %s: %s", md_file, exc)
