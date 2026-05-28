@@ -30,19 +30,19 @@ class SectionResult(BaseModel):
 
 
 class AskResponse(BaseModel):
-    answer: Optional[str]
-    section: Optional[str]
-    source: Optional[str]
+    answer: Optional[str] = None
+    section: Optional[str] = None
+    source: Optional[str] = None
     confidence: float
     alternatives: list[SectionResult]
-    message: Optional[str]
+    message: Optional[str] = None
 
 
 class HealthResponse(BaseModel):
     status: str
     indexed_sections: int
     indexed_files: int
-    last_indexed: Optional[str]
+    last_indexed: Optional[str] = None
 
 
 class SectionInfo(BaseModel):

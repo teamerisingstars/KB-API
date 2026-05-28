@@ -46,3 +46,8 @@ def test_health_response():
 def test_sections_response():
     sr = SectionsResponse(sections=[SectionInfo(heading="Intro", source="test.md")])
     assert len(sr.sections) == 1
+
+def test_reload_response():
+    r = ReloadResponse(status="reindexing", message="Reindex triggered.")
+    assert r.status == "reindexing"
+    assert r.message == "Reindex triggered."
