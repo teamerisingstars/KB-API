@@ -5,14 +5,12 @@ from app.indexer import IndexStore
 from app.models import AskResponse, SectionResult
 from app.nlp import expand_synonyms, lemmatize_text_with_pos
 
-_NO_MATCH = AskResponse(
-    answer=None,
-    section=None,
-    source=None,
-    confidence=0.0,
-    alternatives=[],
-    message="I don't have enough information to answer that.",
-)
+def _no_match() -> AskResponse:
+    return AskResponse(
+        confidence=0.0,
+        alternatives=[],
+        message="I don't have enough information to answer that.",
+    )
 
 
 def _tf_scores(bm25, query_tokens: list[str]) -> np.ndarray:
@@ -34,13 +32,13 @@ def search(question: str, index_store: IndexStore) -> AskResponse:
     sections, bm25 = index_store.snapshot()
 
     if not sections or bm25 is None:
-        return _NO_MATCH
+        return _no_match()
 
     tokens_with_pos = lemmatize_text_with_pos(question)
     query_tokens = expand_synonyms(tokens_with_pos, max_synonyms=MAX_SYNONYMS_PER_TOKEN)
 
     if not query_tokens:
-        return _NO_MATCH
+        return _no_match()
 
     scores = bm25.get_scores(query_tokens)
 
@@ -51,7 +49,7 @@ def search(question: str, index_store: IndexStore) -> AskResponse:
         scores = _tf_scores(bm25, query_tokens)
 
     if not scores.size or scores.max() < CONFIDENCE_THRESHOLD:
-        return _NO_MATCH
+        return _no_match()
 
     ranked = sorted(
         ((i, float(score)) for i, score in enumerate(scores) if score >= CONFIDENCE_THRESHOLD),

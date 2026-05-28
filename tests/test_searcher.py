@@ -46,8 +46,9 @@ def test_search_no_match_returns_null_answer(mini_store):
 def test_search_confidence_is_absolute_not_forced_to_one(mini_store):
     response = search("what is a car", mini_store)
     if response.answer is not None:
-        assert response.confidence <= 1.0
         assert response.confidence > 0.0
+        # Absolute scoring: raw_score / SCORE_SCALE — top result must NOT be forced to 1.0
+        assert response.confidence < 1.0
 
 
 def test_search_returns_alternatives(mini_store):
