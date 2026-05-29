@@ -6,6 +6,7 @@ from pathlib import Path
 from markdown_it import MarkdownIt
 from rank_bm25 import BM25Okapi
 
+from app.fuzzy import BKTree, build_bk_tree
 from app.models import Section
 from app.nlp import lemmatize_text
 
@@ -31,38 +32,45 @@ def parse_sections(content: str, source_file: str) -> list[Section]:
                 heading=heading,
                 body=body,
                 source_file=source_file,
-                tokens=lemmatize_text(body),
+                tokens=lemmatize_text(heading + " " + body),
             ))
 
-    for token in tokens:
-        if token.type == "heading_open":
-            flush()
-            current_heading = None
-            current_body_parts.clear()
+    for tok in tokens:
+        if tok.type == "heading_open":
+            if heading_seen:
+                flush()
+                current_body_parts = []
+            elif current_body_parts:
+                # Content appeared before the first heading — store it as
+                # an Introduction section so it isn't merged into heading 1.
+                current_heading = "Introduction"
+                flush()
+                current_body_parts = []
             inside_heading = True
             heading_seen = True
-        elif token.type == "heading_close":
+            current_heading = None
+        elif tok.type == "heading_close":
             inside_heading = False
-        elif token.type == "fence":
-            pass  # fence token holds the entire code block; intentionally not appended to body
-        elif token.type == "inline":
+        elif tok.type == "inline":
+            text = (tok.content or "").strip()
+            if not text:
+                continue
             if inside_heading:
-                current_heading = token.content
+                current_heading = text
             else:
-                current_body_parts.append(token.content)
+                current_body_parts.append(text)
 
-    flush()
-
-    if not heading_seen and content.strip():
-        # No headings found: discard any "Introduction" section and use filename stem
-        sections.clear()
-        filename = Path(source_file).stem
-        body = content.strip()
+    if heading_seen:
+        flush()
+    elif current_body_parts:
+        # No headings at all — single section keyed off the filename.
+        heading = Path(source_file).stem
+        body = " ".join(current_body_parts).strip()
         sections.append(Section(
-            heading=filename,
+            heading=heading,
             body=body,
             source_file=source_file,
-            tokens=lemmatize_text(body),
+            tokens=lemmatize_text(heading + " " + body),
         ))
 
     return sections
@@ -75,6 +83,7 @@ class IndexStore:
         self._lock = threading.Lock()
         self._sections: list[Section] = []
         self._bm25: BM25Okapi | None = None
+        self._bk_tree: BKTree | None = None
         self._file_count: int = 0
         self._last_indexed: str | None = None
 
@@ -82,19 +91,21 @@ class IndexStore:
         self,
         sections: list[Section],
         bm25: BM25Okapi | None,
-        file_count: int,
-        last_indexed: str,
+        bk_tree: BKTree | None = None,
+        file_count: int = 0,
+        last_indexed: str = "",
     ) -> None:
         with self._lock:
             self._sections = sections
             self._bm25 = bm25
+            self._bk_tree = bk_tree
             self._file_count = file_count
             self._last_indexed = last_indexed
 
-    def snapshot(self) -> tuple[list[Section], BM25Okapi | None]:
-        """Return sections + bm25 atomically to avoid TOCTOU between two reads."""
+    def snapshot(self) -> tuple[list[Section], BM25Okapi | None, BKTree | None]:
+        """Return sections + bm25 + bk_tree atomically to avoid torn reads."""
         with self._lock:
-            return self._sections, self._bm25
+            return self._sections, self._bm25, self._bk_tree
 
     @property
     def sections(self) -> list[Section]:
@@ -105,6 +116,11 @@ class IndexStore:
     def bm25(self) -> BM25Okapi | None:
         with self._lock:
             return self._bm25
+
+    @property
+    def bk_tree(self) -> BKTree | None:
+        with self._lock:
+            return self._bk_tree
 
     @property
     def file_count(self) -> int:
@@ -118,7 +134,7 @@ class IndexStore:
 
 
 def build_index(knowledge_dir: str, index_store: IndexStore) -> None:
-    """Walk knowledge_dir, parse all .md files, build BM25 index, atomically swap."""
+    """Walk knowledge_dir, parse all .md files, build BM25 + BK-tree, atomic swap."""
     knowledge_path = Path(knowledge_dir)
     if not knowledge_path.exists():
         logger.error("Knowledge directory not found: %s", knowledge_dir)
@@ -135,7 +151,12 @@ def build_index(knowledge_dir: str, index_store: IndexStore) -> None:
         except Exception as exc:
             logger.warning("Skipping %s: %s", md_file, exc)
 
-    bm25 = BM25Okapi([s.tokens for s in sections]) if sections else None
+    token_stream = [s.tokens for s in sections]
+    bm25 = BM25Okapi(token_stream) if sections else None
+    bk_tree = build_bk_tree(token_stream) if sections else None
     last_indexed = datetime.now(timezone.utc).isoformat()
-    index_store.swap(sections, bm25, len(md_files), last_indexed)
-    logger.info("Indexed %d sections from %d files", len(sections), len(md_files))
+    index_store.swap(sections, bm25, bk_tree, len(md_files), last_indexed)
+    logger.info(
+        "Indexed %d sections from %d files (vocab: %d)",
+        len(sections), len(md_files), len(bk_tree) if bk_tree else 0,
+    )

@@ -3,6 +3,9 @@ import numpy as np
 from app.config import (
     CONFIDENCE_THRESHOLD,
     FILENAME_BOOST_FACTOR,
+    FUZZY_CONFIDENCE_CAP,
+    FUZZY_CORRECTION_ENABLED,
+    FUZZY_MAX_CANDIDATES,
     HEADING_BOOST_FACTOR,
     HEADING_OVERLAP_THRESHOLD,
     MAX_RESULTS,
@@ -10,6 +13,7 @@ from app.config import (
     REFERENCE_PATH_BOOST,
     SCORE_SCALE,
 )
+from app.fuzzy import fuzzy_candidates
 from app.indexer import IndexStore
 from app.models import AskResponse, SectionResult
 from app.nlp import (
@@ -39,8 +43,8 @@ def _tf_scores(bm25, query_tokens):
 
 
 def _apply_heading_boost(scores, sections, query_lemmas):
-    """Multiplicative boost for sections whose heading overlaps the query, plus
-    an additive bonus when the heading EXACTLY matches the query subject."""
+    """Multiplicative boost for sections whose heading overlaps the query,
+    plus an additive bonus when the heading EXACTLY matches the query."""
     boosted = scores.copy()
     for i, section in enumerate(sections):
         heading_tokens = set(lemmatize_text(section.heading))
@@ -56,8 +60,7 @@ def _apply_heading_boost(scores, sections, query_lemmas):
 
 def _apply_filename_boost(scores, sections, query_lemmas):
     """Boost sections whose source filename overlaps the query subject —
-    'what is response_model' should favour response-model.md. Plus a small
-    extra boost for sections under reference/ (canonical definitions)."""
+    'what is response_model' should favour response-model.md."""
     boosted = scores.copy()
     for i, section in enumerate(sections):
         path = section.source_file
@@ -70,8 +73,32 @@ def _apply_filename_boost(scores, sections, query_lemmas):
     return boosted
 
 
+def _apply_typo_correction(query_tokens, bk_tree) -> tuple[list[str], set[str], bool]:
+    """For each query token NOT in the indexed vocab, find nearest-neighbour
+    candidates and append them to the query stream.
+
+    Returns (new_tokens, fuzzy_set, used_fuzzy):
+      - new_tokens: full token list including the corrections
+      - fuzzy_set: ONLY the corrections that were appended (so callers can
+        feed them to heading/filename boost checks)
+      - used_fuzzy: True if any correction fired (caller caps confidence)
+    """
+    if bk_tree is None or not FUZZY_CORRECTION_ENABLED:
+        return query_tokens, set(), False
+    fuzzy_set: set[str] = set()
+    corrected = list(query_tokens)
+    for tok in query_tokens:
+        if tok in bk_tree:
+            continue
+        suggestions = fuzzy_candidates(bk_tree, tok, max_candidates=FUZZY_MAX_CANDIDATES)
+        if suggestions:
+            corrected.extend(suggestions)
+            fuzzy_set.update(suggestions)
+    return list(dict.fromkeys(corrected)), fuzzy_set, bool(fuzzy_set)
+
+
 def search(question: str, index_store: IndexStore) -> AskResponse:
-    sections, bm25 = index_store.snapshot()
+    sections, bm25, bk_tree = index_store.snapshot()
     if not sections or bm25 is None:
         return _no_match()
 
@@ -83,11 +110,33 @@ def search(question: str, index_store: IndexStore) -> AskResponse:
     if not query_tokens:
         return _no_match()
 
+    # Typo correction — fires only for tokens not in the indexed vocab.
+    query_tokens, fuzzy_corrections, used_fuzzy = _apply_typo_correction(query_tokens, bk_tree)
+
+    # Out-of-domain guard: if 3+ user-supplied tokens are unrecognized, the
+    # query is almost certainly out of domain (e.g. "quantum entanglement
+    # neutrino flux" against a FastAPI corpus). Returning a fuzzy-corrected
+    # result there is worse than honestly returning null. A single typo'd
+    # token is allowed — that's the common case the correction was built for.
+    if used_fuzzy and bk_tree is not None:
+        # Count from the USER'S question only, not synonym expansion —
+        # WordNet synonyms ("carrier", "toter" for "bearer") often aren't in
+        # the indexed vocab and would inflate the count.
+        user_lemmas = {lemma for lemma, _ in tokens_with_pos}
+        unrecognized = sum(
+            1 for t in user_lemmas
+            if t not in bk_tree and " " not in t and len(t) >= 3
+        )
+        if unrecognized >= 3:
+            return _no_match()
+
     scores = bm25.get_scores(query_tokens)
     if scores.size and scores.max() <= 0.0:
         scores = _tf_scores(bm25, query_tokens)
 
-    query_lemmas = {lemma for lemma, _ in tokens_with_pos}
+    # Include fuzzy corrections in the lemma set so heading/filename boost
+    # checks recognise that "corss" → "cors" should boost CORS sections.
+    query_lemmas = {lemma for lemma, _ in tokens_with_pos} | fuzzy_corrections
     scores = _apply_heading_boost(scores, sections, query_lemmas)
     scores = _apply_filename_boost(scores, sections, query_lemmas)
 
@@ -100,22 +149,30 @@ def search(question: str, index_store: IndexStore) -> AskResponse:
         reverse=True,
     )[:MAX_RESULTS]
 
+    # Cap the displayed confidence when fuzzy fired. The raw score still
+    # wins the ranking — we just signal lower trust to the caller.
+    confidence_cap = FUZZY_CONFIDENCE_CAP if used_fuzzy else 1.0
+
     results = [
         SectionResult(
             answer=sections[idx].body,
             section=sections[idx].heading,
             source=sections[idx].source_file,
-            confidence=round(min(score / SCORE_SCALE, 1.0), 4),
+            confidence=round(min(score / SCORE_SCALE, confidence_cap), 4),
         )
         for idx, score in ranked
     ]
 
     best = results[0]
+    msg = (
+        "Result based on a fuzzy match — your query contained tokens not in "
+        "the indexed vocabulary. Verify the source before trusting the answer."
+    ) if used_fuzzy else None
     return AskResponse(
         answer=best.answer,
         section=best.section,
         source=best.source,
         confidence=best.confidence,
         alternatives=results[1:],
-        message=None,
+        message=msg,
     )
