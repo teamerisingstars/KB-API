@@ -1,0 +1,11 @@
+# One question per line. Lines starting with # are ignored.
+# For stricter checks, use JSON: {"q": "...", "must_match": "filename-or-section-keyword"}
+
+what is response_model
+how do I add CORS
+what is OAuth2PasswordBearer
+what is APIRouter
+how does background tasks work
+what is lifespan
+how do I serve static files
+how do I use Pydantic v2

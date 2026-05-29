@@ -1,0 +1,45 @@
+name: 'Docs Q&A Validator'
+description: 'Validate that your markdown docs answer key questions. BM25-based, no AI, no external API calls.'
+author: 'sujith'
+branding:
+  icon: 'check-circle'
+  color: 'green'
+
+inputs:
+  docs-path:
+    description: 'Path to the folder containing your .md files (relative to repo root).'
+    required: false
+    default: 'docs/'
+  questions-file:
+    description: 'Path to a file with one question per line (or one JSON object per line: {"q":"...","must_match":"..."}).'
+    required: false
+    default: '.github/docs-questions.txt'
+  fail-on-missing:
+    description: 'Fail the action if any question returns null.'
+    required: false
+    default: 'true'
+  min-confidence:
+    description: 'Minimum confidence to consider a question "answered" (0.0–1.0).'
+    required: false
+    default: '0.2'
+
+outputs:
+  results-json:
+    description: 'JSON array of {question, section, source, confidence, passed}.'
+  pass-count:
+    description: 'Number of questions that passed.'
+  fail-count:
+    description: 'Number of questions that failed (null answer or below min-confidence).'
+  summary:
+    description: 'Human-readable summary line, e.g. "8 of 10 passed".'
+
+runs:
+  using: 'docker'
+  image: 'Dockerfile'
+  entrypoint: 'python'
+  args:
+    - '/app/action_validate.py'
+    - '${{ inputs.docs-path }}'
+    - '${{ inputs.questions-file }}'
+    - '${{ inputs.fail-on-missing }}'
+    - '${{ inputs.min-confidence }}'

@@ -5,12 +5,21 @@ from app.config import (
     MAX_RESULTS,
     WATCHER_DEBOUNCE_MS,
     MAX_SYNONYMS_PER_TOKEN,
+    HEADING_BOOST_FACTOR,
+    HEADING_OVERLAP_THRESHOLD,
+    FILENAME_BOOST_FACTOR,
+    REFERENCE_PATH_BOOST,
 )
+
 
 def test_config_defaults():
     assert KNOWLEDGE_DIR == "knowledge/"
     assert CONFIDENCE_THRESHOLD == 0.1
-    assert SCORE_SCALE == 10.0
+    assert SCORE_SCALE == 25.0
     assert MAX_RESULTS == 3
     assert WATCHER_DEBOUNCE_MS == 500
     assert MAX_SYNONYMS_PER_TOKEN == 2
+    assert HEADING_BOOST_FACTOR == 2.0
+    assert HEADING_OVERLAP_THRESHOLD == 0.5
+    assert FILENAME_BOOST_FACTOR == 1.4
+    assert REFERENCE_PATH_BOOST == 1.2

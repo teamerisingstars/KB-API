@@ -1,0 +1,51 @@
+# fly.toml — Fly.io configuration for the Knowledge Base API.
+# Replace `app = "kbapi-yourname"` below with your own globally-unique name
+# before running `fly launch` (or use `fly launch --name <yourname>`).
+#
+# Free tier behaviour:
+#   - shared-cpu-1x with 256 MB is well within the free allowance.
+#   - auto_stop_machines = "stop" + min_machines_running = 0 means the VM
+#     scales to zero when idle (cold start ~3 seconds on next request).
+#   - If you index a large corpus and want zero cold-start, set
+#     min_machines_running = 1.
+
+app = "kbapi"
+primary_region = "iad"
+kill_signal = "SIGTERM"
+kill_timeout = "15s"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  KNOWLEDGE_DIR = "/app/knowledge"
+  PORT = "8000"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "20s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+  cpu_kind = "shared"
+  cpus = 1
+
+# Optional: persistent volume so you can drop in extra .md files after deploy.
+# Uncomment and run `fly volumes create kb_docs --size 1` before deploying.
+#
+# [mounts]
+#   source = "kb_docs"
+#   destination = "/app/knowledge"
+#   initial_size = "1gb"

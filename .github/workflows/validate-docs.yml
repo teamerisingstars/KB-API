@@ -1,0 +1,34 @@
+name: Validate docs Q&A
+
+on:
+  pull_request:
+    paths:
+      - 'docs/**'
+      - '.github/docs-questions.txt'
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - '.github/docs-questions.txt'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate that docs answer key questions
+        id: docs-qa
+        uses: ./
+        with:
+          docs-path: docs/
+          questions-file: .github/docs-questions.txt
+          fail-on-missing: 'true'
+          min-confidence: '0.2'
+
+      - name: Print summary
+        if: always()
+        run: |
+          echo "Result: ${{ steps.docs-qa.outputs.summary }}"
+          echo "Passed: ${{ steps.docs-qa.outputs.pass-count }}"
+          echo "Failed: ${{ steps.docs-qa.outputs.fail-count }}"
