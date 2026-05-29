@@ -6,9 +6,9 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     NLTK_DATA=/opt/nltk_data
 
-# System deps needed only at install time
+# System deps needed only at install time — git for fetching demo corpora
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates \
+ && apt-get install -y --no-install-recommends ca-certificates git \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -28,9 +28,14 @@ COPY app ./app
 COPY download_nltk_data.py ./
 COPY action_validate.py ./
 
-# Default knowledge dir — override with a volume mount at runtime
-RUN mkdir -p /app/knowledge
-COPY knowledge/ /app/knowledge/
+# Demo corpus — fetched at build time so the public demo has something real to query.
+# Uses sparse-checkout so we pull only docs/, not the full repo, keeping the image small.
+RUN mkdir -p /app/knowledge \
+ && git clone --depth 1 --filter=blob:none --sparse https://github.com/tiangolo/fastapi.git /tmp/fastapi \
+ && (cd /tmp/fastapi && git sparse-checkout set docs/en/docs) \
+ && mkdir -p /app/knowledge/fastapi \
+ && cp -r /tmp/fastapi/docs/en/docs/. /app/knowledge/fastapi/ \
+ && rm -rf /tmp/fastapi
 
 EXPOSE 8000
 
